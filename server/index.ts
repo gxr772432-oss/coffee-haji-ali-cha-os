@@ -7,7 +7,6 @@ const MAX_LOGIN_REQUESTS = 5;
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const chatRequests = new Map<string, { count: number; reset: number }>();
 const loginRequests = new Map<string, { count: number; reset: number }>();
-const sessions = new Map<string, number>();
 
 const headers = (origin: string | null) => ({
   "Content-Type": "application/json; charset=utf-8",
@@ -53,6 +52,36 @@ async function sameSecret(candidate: string, expected: string) {
   return diff === 0;
 }
 
+function toBase64Url(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/=/g, "").replace(/\\+/g, "-").replace(/\\//g, "_");
+}
+function fromBase64Url(value: string) {
+  const base = value.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(base + "=".repeat((4 - base.length % 4) % 4));
+  return Uint8Array.from(binary, c => c.charCodeAt(0));
+}
+async function sessionKey(password: string) {
+  const material = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(password + "|CHA-OS-session-v1"));
+  return crypto.subtle.importKey("raw", material, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+}
+async function createSession(password: string) {
+  const payload = toBase64Url(new TextEncoder().encode(JSON.stringify({ exp: Date.now() + SESSION_MS, nonce: crypto.randomUUID() })));
+  const signature = await crypto.subtle.sign("HMAC", await sessionKey(password), new TextEncoder().encode(payload));
+  return payload + "." + toBase64Url(new Uint8Array(signature));
+}
+async function validSession(token: string, password: string) {
+  try {
+    const [payload, signature, extra] = token.split(".");
+    if (!payload || !signature || extra) return false;
+    const ok = await crypto.subtle.verify("HMAC", await sessionKey(password), fromBase64Url(signature), new TextEncoder().encode(payload));
+    if (!ok) return false;
+    const data = JSON.parse(new TextDecoder().decode(fromBase64Url(payload)));
+    return Number.isFinite(data.exp) && data.exp > Date.now();
+  } catch { return false; }
+}
+
 function clientIp(req: Request) {
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
 }
@@ -95,9 +124,7 @@ const server = Bun.serve({
       if (!candidate || candidate.length > 256 || !(await sameSecret(candidate, password))) {
         return json({ error: "كلمة المرور غير صحيحة." }, 401, origin);
       }
-      for (const [existing, expiry] of sessions) if (expiry <= Date.now()) sessions.delete(existing);
-      const token = crypto.randomUUID() + crypto.randomUUID().replaceAll("-", "");
-      sessions.set(token, Date.now() + SESSION_MS);
+      const token = await createSession(password);
       return json({ token, expiresIn: SESSION_MS }, 200, origin);
     }
 
@@ -107,9 +134,8 @@ const server = Bun.serve({
 
     const auth = req.headers.get("authorization") || "";
     const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-    const expiresAt = sessions.get(token);
-    if (!token || !expiresAt || expiresAt <= Date.now()) {
-      if (token) sessions.delete(token);
+    const loginPassword = Bun.env.CHA_LOGIN_PASSWORD || "";
+    if (!token || !loginPassword || !(await validSession(token, loginPassword))) {
       return json({ error: "انتهت جلسة الدخول. سجّل دخولك من جديد." }, 401, origin);
     }
 
@@ -155,8 +181,11 @@ const server = Bun.serve({
         signal: AbortSignal.timeout(45_000),
       });
 
-      const result = await upstream.json().catch(() => ({}));
+      const rawResult = await upstream.text();
+      let result: any = {};
+      try { result = JSON.parse(rawResult); } catch {}
       if (!upstream.ok) {
+        console.error("[Gemini] upstream error", JSON.stringify({ status: upstream.status, body: rawResult.slice(0, 1200) }));
         const message = upstream.status === 429
           ? "انتهى الحد المؤقت لاستخدام Gemini. حاول لاحقاً."
           : upstream.status === 401 || upstream.status === 403
@@ -169,7 +198,8 @@ const server = Bun.serve({
       if (!answer) return json({ error: "وصل رد فارغ من Gemini. حاول مرة ثانية." }, 502, origin);
       return json({ answer, model: MODEL }, 200, origin);
     } catch (error) {
-      const timedOut = error instanceof Error && error.name === "TimeoutError";
+      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+      console.error("[Gemini] request failed", JSON.stringify({ name: error instanceof Error ? error.name : "UnknownError", message: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500), timedOut }));
       return json({ error: timedOut ? "تأخر الرد. حاول مرة ثانية." : "تعذر الوصول إلى Gemini." }, 502, origin);
     }
   },
