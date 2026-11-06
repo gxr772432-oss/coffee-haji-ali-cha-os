@@ -1,0 +1,11 @@
+{
+  "name": "cha-os-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run server/index.ts"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  }
+}
