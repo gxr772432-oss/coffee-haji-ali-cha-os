@@ -90,6 +90,7 @@ const server = Bun.serve({
         if (new TextEncoder().encode(raw).byteLength > 2_000) return json({ error: "الطلب كبير جداً." }, 413, origin);
         body = JSON.parse(raw);
       } catch { return json({ error: "صيغة الطلب غير صحيحة." }, 400, origin); }
+      if (!body || typeof body !== "object") return json({ error: "صيغة الطلب غير صحيحة." }, 400, origin);
       const candidate = typeof body.password === "string" ? body.password : "";
       if (!candidate || candidate.length > 256 || !(await sameSecret(candidate, password))) {
         return json({ error: "كلمة المرور غير صحيحة." }, 401, origin);
@@ -129,13 +130,14 @@ const server = Bun.serve({
       if (new TextEncoder().encode(raw).byteLength > MAX_BODY) return json({ error: "الطلب كبير جداً." }, 413, origin);
       body = JSON.parse(raw);
     } catch { return json({ error: "صيغة الطلب غير صحيحة." }, 400, origin); }
+    if (!body || typeof body !== "object") return json({ error: "صيغة الطلب غير صحيحة." }, 400, origin);
 
     const message = String(body.message || "").trim();
     if (!message || message.length > 5000) return json({ error: "اكتب رسالة من 1 إلى 5000 حرف." }, 400, origin);
 
     const history = Array.isArray(body.history) ? body.history.slice(-10) : [];
     const transcript = history
-      .filter(x => (x.role === "user" || x.role === "assistant") && typeof x.text === "string")
+      .filter(x => x && (x.role === "user" || x.role === "assistant") && typeof x.text === "string")
       .map(x => (x.role === "user" ? "المستخدم" : "كوفي حجي علي") + ": " + String(x.text).slice(0, 2500))
       .join("\n");
     const input = (transcript ? "سياق المحادثة السابقة:\n" + transcript + "\n\n" : "") + "رسالة المستخدم الحالية: " + message;
