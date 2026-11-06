@@ -4,13 +4,12 @@ This is the private server component for the GitHub Pages frontend.
 
 ## Deploy (Railway / Bun)
 
-1. Create a Railway service from this repository and set the service root directory to `server`.
+1. Create a Railway service from this repository (`main`) and keep the service root directory at the repository root. The root `railway.json` and `package.json` configure the Bun start command and `/health` check.
 2. Set these server variables in Railway (never in GitHub files):
    - `GEMINI_API_KEY` = your newly created Gemini API key
    - `ALLOWED_ORIGIN` = `https://gxr772432-oss.github.io`
    - Optional: `GEMINI_MODEL` = `gemini-3.8-flash`
-3. Configure the service start command as `bun run index.ts` (Railway's Bun runtime).
-4. After deploy, verify `https://YOUR-SERVICE-DOMAIN/health` returns `{"ok":true,...}`.
+3. After deploy, verify `https://YOUR-SERVICE-DOMAIN/health` returns `{"ok":true,...}`.
 5. Set the deployed service base URL in the repository's `config.js` as `apiBaseUrl`, then commit.
 
 ## Endpoints
