@@ -70,7 +70,7 @@ const server = Bun.serve({
     }
 
     if (url.pathname === "/health" && req.method === "GET") {
-      return json({ ok: true, service: "CHA OS AI", model: MODEL, authentication: "enabled" }, 200, origin);
+      return json({ ok: true, service: "CHA OS AI", model: MODEL, authentication: Bun.env.CHA_LOGIN_PASSWORD && Bun.env.CHA_LOGIN_PASSWORD.length >= 14 ? "ready" : "password_required" }, 200, origin);
     }
 
     if (url.pathname === "/api/login" && req.method === "POST") {
@@ -85,11 +85,16 @@ const server = Bun.serve({
       const length = Number(req.headers.get("content-length") || 0);
       if (length > 2_000) return json({ error: "الطلب كبير جداً." }, 413, origin);
       let body: { password?: string };
-      try { body = await req.json(); } catch { return json({ error: "صيغة الطلب غير صحيحة." }, 400, origin); }
+      try {
+        const raw = await req.text();
+        if (new TextEncoder().encode(raw).byteLength > 2_000) return json({ error: "الطلب كبير جداً." }, 413, origin);
+        body = JSON.parse(raw);
+      } catch { return json({ error: "صيغة الطلب غير صحيحة." }, 400, origin); }
       const candidate = typeof body.password === "string" ? body.password : "";
       if (!candidate || candidate.length > 256 || !(await sameSecret(candidate, password))) {
         return json({ error: "كلمة المرور غير صحيحة." }, 401, origin);
       }
+      for (const [existing, expiry] of sessions) if (expiry <= Date.now()) sessions.delete(existing);
       const token = crypto.randomUUID() + crypto.randomUUID().replaceAll("-", "");
       sessions.set(token, Date.now() + SESSION_MS);
       return json({ token, expiresIn: SESSION_MS }, 200, origin);
@@ -119,7 +124,11 @@ const server = Bun.serve({
     if (length > MAX_BODY) return json({ error: "الطلب كبير جداً." }, 413, origin);
 
     let body: { message?: string; history?: Array<{ role?: string; text?: string }> };
-    try { body = await req.json(); } catch { return json({ error: "صيغة الطلب غير صحيحة." }, 400, origin); }
+    try {
+      const raw = await req.text();
+      if (new TextEncoder().encode(raw).byteLength > MAX_BODY) return json({ error: "الطلب كبير جداً." }, 413, origin);
+      body = JSON.parse(raw);
+    } catch { return json({ error: "صيغة الطلب غير صحيحة." }, 400, origin); }
 
     const message = String(body.message || "").trim();
     if (!message || message.length > 5000) return json({ error: "اكتب رسالة من 1 إلى 5000 حرف." }, 400, origin);
