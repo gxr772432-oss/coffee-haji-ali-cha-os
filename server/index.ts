@@ -18,7 +18,8 @@ function json(data: unknown, status = 200, origin: string | null = null) {
   return new Response(JSON.stringify(data), { status, headers: headers(origin) });
 }
 
-Bun.serve({
+const server = Bun.serve({
+  hostname: "0.0.0.0",
   port: Number(Bun.env.PORT || 3000),
   async fetch(req) {
     const origin = req.headers.get("origin");
@@ -100,3 +101,5 @@ Bun.serve({
     }
   },
 });
+
+console.log(`CHA OS backend listening on ${server.hostname}:${server.port}`);
